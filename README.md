@@ -30,6 +30,17 @@ Mouse genes are mapped to MGI symbols (~77,600 Ensembl IDs resolved).
 
 > **Note:** pathway and transcription-factor analyses call external services (Reactome, Enrichr, OmniPath). An internet connection is required for those tabs; the core differential-expression workflow runs fully offline.
 
+## Input files
+
+Accepted formats: `.txt`, `.tsv`, `.tab`, `.count`, `.csv` (and `.json` for saved sessions). You can upload multiple files at once. Columns may be tab-, comma-, or whitespace-separated — the delimiter is detected automatically, and lines beginning with `#` are ignored, so raw featureCounts output works as-is.
+
+Two layouts are supported:
+
+- **Per-sample (long):** two columns — gene ID and count — with one file per sample.
+- **Count matrix (wide):** a gene-ID column followed by one count column per sample, with an optional header row of sample names.
+
+Gene IDs should be Ensembl IDs; if a gene-symbol column (e.g. `mgi_symbol`) is present, it is used as well. Counts should be raw, un-normalized integers — normalization is performed inside the tool. Dropping a saved `.json` session onto the upload zone restores your samples, settings, and results.
+
 ## Running locally
 
 No build step is required. Download `index.html` and open it in any modern browser, or clone the repo:
