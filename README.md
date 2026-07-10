@@ -5,6 +5,13 @@ A browser-based tool for exploring bulk RNA-seq differential expression. It runs
 **▶ Use it here: https://zoeliu-duke.github.io/RNAseqExplorer/**
 
 ---
+## What's new in v37
+
+- **Authoritative DESeq2 in R** — a new round-trip bridge lets you swap the in-browser approximation for reference DESeq2 numbers. **Run real DESeq in R** exports a bundle (contrast count matrix, all-sample matrix, and a ready-to-run `deseq2_<contrast>.R` script); run `Rscript deseq2_<contrast>.R` locally, then drop the results table and blind-VST matrix onto **Import DESeq2 output**. Every view (Volcano, DEG Table, Scatter, PCA, Heatmap, Pathways, TF) switches to the real results, with each file auto-detected from its columns. The whole exchange stays on your own machine.
+- **Sample QC tab** — per-sample summaries computed straight from raw counts: library size, detected genes, median-of-ratios size factor, library complexity (top-50 share), mitochondrial fraction, and nearest same-group replicate correlation, with heuristic flags for samples worth inspecting.
+- **More heatmap gene-selection modes** — beyond top contrast DEGs, the heatmap can now show most-variable genes, one-vs-rest marker genes per selected group, or a multi-group likelihood-ratio test (LRT) across arbitrary user-chosen groups.
+- **Expanded Cook's outlier options** — the four modes are documented in more detail, with the **robust leave-one-out filter** as the recommended default (it only flips a gene's significance flag and never alters reported log₂FC, p, or padj).
+
 
 ## What it does
 
@@ -45,7 +52,7 @@ Gene IDs should be Ensembl IDs; if a gene-symbol column (e.g. `mgi_symbol`) is p
 
 No build step is required. Download `index.html` and open it in any modern browser, or clone the repo:
 
-```bash
+```
 git clone https://github.com/Zoeliu-duke/RNAseqExplorer.git
 cd RNAseqExplorer
 # then open index.html in your browser
@@ -61,9 +68,9 @@ This tool was developed with the assistance of Claude (Anthropic), a large langu
 
 ## Contact
 
-**Yaxin Liu** — zoe.liu@duke.edu
+**Yaxin (Zoe) Liu** — zoe.liu@duke.edu
 Edward Miao Lab, Duke University
 
 ---
 
-*Version 35 · June 2026*
+*Version 37 · July 2026*
