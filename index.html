@@ -395,7 +395,7 @@ tr:hover td{background:var(--bg-hover)}
       <p><b>Authoritative DESeq2 in R.</b> The in-browser engine above is a fast DESeq2-<i>style</i> approximation — great for instant, interactive exploration, but not byte-for-byte identical to the reference implementation. Because <b>DESeq2 itself only runs in R</b> and cannot execute inside a web page, the tool doesn't reimplement it — it hands your data off to the real thing and reads the results back. The round-trip has three steps:</p>
       <ol style="margin:0 0 12px 18px;padding:0;line-height:1.6">
         <li><b>Export</b> — click <i>Run real DESeq in R</i>. The tool writes a small bundle for your current control-vs-treatment contrast: the contrast count matrix, an all-sample count matrix, and a ready-to-run R script (<code>deseq2_run.R</code>).</li>
-        <li><b>Run in R</b> — put those files in one folder and run the script on any machine with R and the <code>DESeq2</code> Bioconductor package, <b>either</b> from a terminal (<code>Rscript deseq2_run.R</code>) <b>or</b> inside the R / RStudio console at the <code>&gt;</code> prompt (<code>source("deseq2_run.R")</code> — do <i>not</i> type <code>Rscript</code> there). The script runs the genuine DESeq2 analysis and writes two outputs: a results table (<code>baseMean, log2FoldChange, lfcSE, stat, pvalue, padj</code>) and a blind variance-stabilised (VST) matrix across all samples. <span style="opacity:.85">(Have Claude Code? A one-click button copies a prompt that runs this for you.)</span></li>
+        <li><b>Run in R</b> — put those files in one folder and run the script on any machine with R and the <code>DESeq2</code> Bioconductor package, <b>either</b> from a terminal (<code>Rscript deseq2_run.R</code>) <b>or</b> inside the R / RStudio console at the <code>&gt;</code> prompt (<code>source("deseq2_run.R")</code> — do <i>not</i> type <code>Rscript</code> there). The script runs the genuine DESeq2 analysis and writes a results table (<code>baseMean, log2FoldChange, lfcSE, stat, pvalue, padj</code>, plus explicit <code>log2FoldChange_raw / log2FoldChange_shrunk / lfc_shrinkage</code> and a <code>padj_na_reason</code> column) and a blind variance-stabilised (VST) matrix across all samples, together with provenance files — <code>sessionInfo.txt</code> (R + package versions) and a <code>run_manifest.json</code> identity check that warns on a wrong-dataset or wrong/swapped-contrast import. <span style="opacity:.85">(Have Claude Code? A one-click button copies a prompt that runs this for you.)</span></li>
         <li><b>Import back</b> — drop those two files onto <i>Import DESeq2 output</i>. Each is auto-detected from its columns (not its filename), and every view switches from the browser approximation to the real DESeq2 numbers: Volcano, DEG Table, Scatter, Pathways and TF from the results table; PCA and Heatmap from the VST.</li>
       </ol>
       <p>The result: the whole pipeline stays on your own hardware — the browser for speed, R for the authoritative statistics — with no server anywhere in the loop.</p>
@@ -6203,7 +6203,9 @@ writeLines(capture.output(sessionInfo()), "sessionInfo.txt")
 if (requireNamespace("jsonlite", quietly = TRUE)) {
   .mani <- list(
     format            = "rnaseq_explorer_deseq_manifest",
-    contrast          = "treatment_vs_control",
+    contrast          = ${_rstr(tag)},
+    control_group     = ${_rstr(ctrl)},
+    treatment_group   = ${_rstr(treat)},
     n_control         = ${nC},
     n_treatment       = ${nT},
     n_genes           = nrow(res),
@@ -6299,15 +6301,34 @@ function _sniffDeseqFile(text){
 // only — it never blocks the import, just warns.
 function _checkDeseqManifest(text, fname){
   let m; try{ m=JSON.parse(text); }catch(e){ return `<span style="color:var(--warn-clr)">${escH(fname)}: manifest present but unreadable.</span>`; }
-  const want=[...new Set([].concat(m.all_samples||[], m.control_samples||[], m.treatment_samples||[]).map(String))];
+  const mCtrl=(m.control_samples||[]).map(String), mTreat=(m.treatment_samples||[]).map(String);
+  const want=[...new Set([].concat(m.all_samples||[], mCtrl, mTreat).map(String))];
   if(!want.length) return `✓ <b>manifest</b> — <code>${escH(fname)}</code> (no sample list to check)`;
   const have=new Set([].concat(
     (typeof sampleStore!=='undefined'&&sampleStore?sampleStore.map(s=>s.name):[]),
     (typeof samples!=='undefined'&&samples?samples:[])).map(String));
   const miss=want.filter(n=>!have.has(n));
-  const cLabel=m.contrast?', '+escH(String(m.contrast)):'';
-  if(!miss.length) return `✓ <b>manifest</b> — <code>${escH(fname)}</code> matches this session (${want.length} samples${cLabel})`;
-  return `<span style="color:var(--warn-clr)">⚠ <b>manifest mismatch</b> — ${miss.length}/${want.length} samples in <code>${escH(fname)}</code> are not in your current session (e.g. ${escH(miss.slice(0,3).join(', '))}). These DESeq2 outputs may be from a DIFFERENT dataset or contrast — double-check before trusting the imported numbers.</span>`;
+  const cLabel=m.contrast?' · <code>'+escH(String(m.contrast))+'</code>':'';
+  // (1) Wrong dataset — required samples aren't even here.
+  if(miss.length)
+    return `<span style="color:var(--warn-clr)">⚠ <b>manifest mismatch</b> — ${miss.length}/${want.length} samples in <code>${escH(fname)}</code> are not in your current session (e.g. ${escH(miss.slice(0,3).join(', '))}). These DESeq2 outputs are from a DIFFERENT dataset — do not trust the imported numbers here.</span>`;
+  // (2) Right dataset — now check the CONTRAST DIRECTION vs the current selection.
+  const selCtrl=document.getElementById('selCtrl')?.value, selTreat=document.getElementById('selTreat')?.value;
+  if(selCtrl && selTreat && mCtrl.length && mTreat.length && typeof groupIndices!=='undefined' && typeof samples!=='undefined'){
+    const cur=g=>new Set((groupIndices[g]||[]).map(i=>samples[i]));
+    const curCtrl=cur(selCtrl), curTreat=cur(selTreat);
+    const eq=(arr,set)=> arr.length===set.size && arr.every(x=>set.has(x));
+    if(curCtrl.size && curTreat.size){
+      const mc=escH(String(m.control_group||'control')), mt=escH(String(m.treatment_group||'treatment'));
+      if(eq(mCtrl,curTreat) && eq(mTreat,curCtrl))
+        return `<span style="color:var(--warn-clr)">⚠ <b>contrast is SWAPPED</b> — these results are <b>${mt} vs ${mc}</b>, but your current selection has Control=<b>${escH(selCtrl)}</b>, Treatment=<b>${escH(selTreat)}</b> — the opposite direction. Every log₂ fold-change is <b>sign-flipped</b> relative to your UI. Swap your Control/Treatment selection (or re-export) before trusting the directions.</span>`;
+      if(!(eq(mCtrl,curCtrl) && eq(mTreat,curTreat)))
+        return `<span style="color:var(--warn-clr)">⚠ <b>contrast differs</b> — the manifest's control/treatment membership doesn't match your current Control (<b>${escH(selCtrl)}</b>) / Treatment (<b>${escH(selTreat)}</b>). These results may be a different contrast${cLabel}; verify before trusting.</span>`;
+      return `✓ <b>manifest</b> — <code>${escH(fname)}</code> matches this session <i>and</i> your <b>${escH(selTreat)}</b> vs <b>${escH(selCtrl)}</b> contrast (${want.length} samples${cLabel})`;
+    }
+  }
+  // (3) Dataset matches; couldn't verify direction (no active contrast selection).
+  return `✓ <b>manifest</b> — <code>${escH(fname)}</code> matches this session (${want.length} samples${cLabel})`;
 }
 
 // Unified import: accepts the results table and/or the VST matrix (multiple files
