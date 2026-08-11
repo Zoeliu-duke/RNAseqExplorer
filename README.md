@@ -4,6 +4,8 @@ A browser-based tool for exploring bulk RNA-seq differential expression. It runs
 
 **▶ Use it here: https://zoeliu-duke.github.io/RNAseqExplorer/**
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21891566.svg)](https://doi.org/10.5281/zenodo.21891566)
+
 ---
 ## What's new in v38
 
@@ -15,9 +17,9 @@ A browser-based tool for exploring bulk RNA-seq differential expression. It runs
 
 ## What's new in v37
 
-- **Authoritative DESeq2 in R** — a new round-trip bridge lets you swap the in-browser approximation for reference DESeq2 numbers. **Run real DESeq in R** exports a bundle (contrast count matrix, all-sample matrix, and a ready-to-run `deseq2_<contrast>.R` script); run `Rscript deseq2_<contrast>.R` locally, then drop the results table and blind-VST matrix onto **Import DESeq2 output**. Every view (Volcano, DEG Table, Scatter, PCA, Heatmap, Pathways, TF) switches to the real results, with each file auto-detected from its columns. The whole exchange stays on your own machine.
+- **Authoritative DESeq2 in R** — a round-trip bridge lets you swap the in-browser approximation for reference DESeq2 numbers. **Run real DESeq in R** exports a bundle (contrast count matrix, all-sample matrix, and a ready-to-run R script); run it locally, then drop the results table and blind-VST matrix onto **Import DESeq2 output**. Every view (Volcano, DEG Table, Scatter, PCA, Heatmap, Pathways, TF) switches to the real results, with each file auto-detected from its columns. The whole exchange stays on your own machine.
 - **Sample QC tab** — per-sample summaries computed straight from raw counts: library size, detected genes, median-of-ratios size factor, library complexity (top-50 share), mitochondrial fraction, and nearest same-group replicate correlation, with heuristic flags for samples worth inspecting.
-- **More heatmap gene-selection modes** — beyond top contrast DEGs, the heatmap can now show most-variable genes, one-vs-rest marker genes per selected group, or a multi-group likelihood-ratio test (LRT) across arbitrary user-chosen groups.
+- **More heatmap gene-selection modes** — beyond top contrast DEGs, the heatmap can show most-variable genes, one-vs-rest marker genes per selected group, or a multi-group likelihood-ratio test (LRT) across arbitrary user-chosen groups.
 - **Expanded Cook's outlier options** — the four modes are documented in more detail, with the **robust leave-one-out filter** as the recommended default (it only flips a gene's significance flag and never alters reported log₂FC, p, or padj).
 
 
@@ -29,8 +31,8 @@ Upload a raw count matrix, choose your control and treatment groups, and run the
 - **Outlier handling** — optional Cook's-distance filtering with four selectable modes.
 - **Volcano plot, expression scatter, and DEG table** — interactive, with per-gene NCBI/UniProt lookups and CSV export.
 - **PCA & heatmap** — built on a blind variance-stabilizing transform (VST).
-- **Pathway enrichment** — over-representation against Reactome, KEGG, and WikiPathways, plus Hallmark enrichment.
-- **Transcription-factor activity** — inferred from CollecTRI regulons using the univariate linear model (ULM) from *decoupleR*.
+- **Pathway enrichment** — over-representation against Reactome, KEGG, and WikiPathways, plus Hallmark over-representation (via Enrichr).
+- **Transcription-factor activity** — inferred from a **mouse CollecTRI** network using the univariate linear model (ULM) from *decoupleR*, with each gene's Wald statistic as input.
 - **Session save/load** — store and restore your samples, settings, and results as a small JSON file.
 
 Mouse genes are mapped to MGI symbols (~77,600 Ensembl IDs resolved).
@@ -43,7 +45,7 @@ Mouse genes are mapped to MGI symbols (~77,600 Ensembl IDs resolved).
 4. Adjust the log₂FC, FDR, and count-filter thresholds in the sidebar.
 5. Click **Run Analysis** and explore the tabs.
 
-> **Note:** pathway and transcription-factor analyses call external services (Reactome, Enrichr, OmniPath). An internet connection is required for those tabs; the core differential-expression workflow runs fully offline.
+> **Note:** pathway and transcription-factor analyses call external services (Reactome, Enrichr, OmniPath) and receive derived gene identifiers only. An internet connection is required for those tabs; the core differential-expression workflow runs fully offline.
 
 ## Input files
 
@@ -54,7 +56,7 @@ Two layouts are supported:
 - **Per-sample (long):** two columns — gene ID and count — with one file per sample.
 - **Count matrix (wide):** a gene-ID column followed by one count column per sample, with an optional header row of sample names.
 
-Gene IDs should be Ensembl IDs; if a gene-symbol column (e.g. `mgi_symbol`) is present, it is used as well. Counts should be raw, un-normalized integers — normalization is performed inside the tool. Dropping a saved `.json` session onto the upload zone restores your samples, settings, and results.
+The gene-id column can be **either** mouse Ensembl IDs (`ENSMUSG…`) **or** MGI gene symbols (`Trp53`, `Actb`, `Cxcl2`) — you do **not** need Ensembl IDs. If your aligner/quantifier already emitted mouse gene names, upload them as-is; symbols are used directly for the DEG table, pathway enrichment, and TF activity. (Ensembl IDs are additionally resolved to MGI symbols for display; if a separate `mgi_symbol` column is present it is used for labeling.) Counts should be raw, un-normalized integers — normalization is performed inside the tool. Dropping a saved `.json` session onto the upload zone restores your samples, settings, and results.
 
 ## Running locally
 
@@ -68,7 +70,21 @@ cd RNAseqExplorer
 
 ## Methods
 
-Counts are pre-filtered by a user-set `rowSums` threshold and normalized with the median-of-ratios method. Gene-wise dispersions are shrunk toward a fitted mean–dispersion trend, and differential expression is called with a DESeq2-style Wald test; p-values are adjusted across all tested genes by the Benjamini–Hochberg procedure. log₂ fold change is computed on size-factor-normalized counts (0.5 pseudocount), with positive values indicating up-regulation in treatment relative to control. PCA and the heatmap use a blind VST independent of group labels. Pathway over-representation is tested by a hypergeometric test against Reactome, KEGG, and WikiPathways; transcription-factor activity uses CollecTRI regulons with the *decoupleR* ULM (Müller-Dott et al., 2023). A full description is available in the **Building Method** panel inside the app.
+Counts are pre-filtered by a user-set `rowSums` threshold and normalized with the median-of-ratios method. Gene-wise dispersions are shrunk toward a fitted mean–dispersion trend, and differential expression is called with a DESeq2-style Wald test; p-values are adjusted across all tested genes by the Benjamini–Hochberg procedure. log₂ fold change is computed on size-factor-normalized counts (0.5 pseudocount), with positive values indicating up-regulation in treatment relative to control. PCA and the heatmap use a blind VST independent of group labels. Pathway and Hallmark over-representation are computed by the external services (Reactome / KEGG / WikiPathways / Enrichr) against their own genome-wide backgrounds. Transcription-factor activity uses a **mouse CollecTRI** network — ortholog-translated from the human CollecTRI (Müller-Dott et al., 2023) via the MGI ortholog table and validated against MGI symbols — with the *decoupleR* univariate linear model, taking each gene's Wald statistic as input (log₂FC fallback). For reference DESeq2 numbers, **Run real DESeq in R** exports the counts plus a self-contained script that reproduces the DE results and a blind VST in genuine DESeq2. A full description is available in the **Building Method** panel inside the app.
+
+## Cite
+
+If RNA-seq Explorer contributed to your work, please cite it:
+
+> Liu, Y. *RNA-seq Explorer* (V38) [Computer software]. Edward Miao Lab, Duke University, 2026. https://doi.org/10.5281/zenodo.21891566 · ORCID: [0009-0004-0853-7790](https://orcid.org/0009-0004-0853-7790)
+
+The **concept DOI** [10.5281/zenodo.21891566](https://doi.org/10.5281/zenodo.21891566) always resolves to the latest version; the v38 release specifically is [10.5281/zenodo.21891567](https://doi.org/10.5281/zenodo.21891567).
+
+Please also cite the underlying methods you use — **DESeq2** (Love, Huber & Anders 2014), **CollecTRI** (Müller-Dott et al. 2023), **decoupleR** (Badia-i-Mompel et al. 2022) — and the resources credited in [`THIRD-PARTY-NOTICE.md`](THIRD-PARTY-NOTICE.md) (MGI, Ensembl, Reactome, Enrichr, MSigDB Hallmark, OmniPath). Machine-readable metadata is in [`CITATION.cff`](CITATION.cff).
+
+## License
+
+The **software** is released under the **MIT License** (see [`LICENSE`](LICENSE)) — © 2026 Yaxin Liu, Edward Miao Lab, Duke University. Bundled libraries (Chart.js, canvas2svg — both MIT) and any redistributed network data (the mouse CollecTRI, derived from CollecTRI / OmniPath / MGI) remain under their own licenses; see [`THIRD-PARTY-NOTICE.md`](THIRD-PARTY-NOTICE.md). The mouse network is reproducible from `build_collectri_mouse.R`.
 
 ## AI Disclosure
 
@@ -76,7 +92,7 @@ This tool was developed with the assistance of Claude (Anthropic), a large langu
 
 ## Contact
 
-**Yaxin (Zoe) Liu** — zoe.liu@duke.edu
+**Yaxin (Zoe) Liu** ([ORCID 0009-0004-0853-7790](https://orcid.org/0009-0004-0853-7790)) — zoe.liu@duke.edu
 Edward Miao Lab, Duke University
 
 ---
