@@ -1,6 +1,27 @@
+# =============================================================================
+# build_collectri_mouse.R
+#   Builds the mouse CollecTRI TF-regulon network (collectri_mouse.csv) used by
+#   RNA-seq Explorer (https://github.com/Zoeliu-duke/RNAseqExplorer).
+#
+# Inputs (place beside this script, or override with environment variables):
+#   GENE_MAP -> gene_map.csv : the ENSMUSG -> MGI symbol table the app itself
+#               loads for gene labeling (defines the valid mouse-symbol universe).
+#   HOM      -> hom.rpt      : MGI HOM_MouseHumanSequence.rpt, the Jackson Lab /
+#               MGI human<->mouse ortholog report. Download:
+#               https://www.informatics.jax.org/downloads/reports/HOM_MouseHumanSequence.rpt
+#   Human CollecTRI is fetched live via decoupleR::get_collectri(organism="human").
+#   (Record the download date/version of gene_map.csv and hom.rpt for provenance.)
+#
+# Output: collectri_mouse.csv  (columns: source, target, weight)
+# Run:    Rscript build_collectri_mouse.R
+#         # optional overrides:
+#         # GENE_MAP=/path/to/gene_map.csv HOM=/path/to/hom.rpt Rscript build_collectri_mouse.R
+# =============================================================================
 suppressMessages({library(decoupleR)})
-GM  <- "/Users/zoeliu/Documents/Miaolab/Bulk RNAseq/rnaseq explorer/gene_map.csv"
-HOM <- "hom.rpt"
+GM  <- Sys.getenv("GENE_MAP", "gene_map.csv")
+HOM <- Sys.getenv("HOM", "hom.rpt")
+if (!file.exists(GM))  stop("gene_map.csv not found (set GENE_MAP=... or run from its folder): ", GM)
+if (!file.exists(HOM)) stop("hom.rpt not found (set HOM=... or run from its folder): ", HOM)
 
 # --- MGI symbol universe (what the user's DEG table uses) ---
 mgi <- read.csv(GM, stringsAsFactors=FALSE)
