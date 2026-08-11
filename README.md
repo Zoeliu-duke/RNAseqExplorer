@@ -5,6 +5,14 @@ A browser-based tool for exploring bulk RNA-seq differential expression. It runs
 **▶ Use it here: https://zoeliu-duke.github.io/RNAseqExplorer/**
 
 ---
+## What's new in v38
+
+- **Mouse CollecTRI network for TF activity** — transcription-factor analysis now runs on a genuine **mouse** CollecTRI network, ortholog-translated from the human CollecTRI via the MGI human↔mouse ortholog table and validated against the MGI symbol set (replacing the earlier uppercase-symbol shortcut). Regulators whose symbols differ across species (e.g. *Trp53*, *Stat1*) are now recovered, and each run reports network **coverage** (matched targets, %, and TFs) against your gene set.
+- **decoupleR-recommended ULM input** — the ULM now uses each gene's **Wald statistic** (log₂FC ÷ standard error) — the decoupleR-recommended footprint input, which down-weights noisy low-count genes — with log₂FC as a labeled fallback for imported tables that lack a statistic.
+- **Richer real-DESeq2 export + guided flow** — **Run real DESeq in R** now opens a step-by-step modal (Download → run `Rscript deseq2_run.R` → Import). The exported script writes explicit `log2FoldChange_raw` / `log2FoldChange_shrunk` / `lfc_shrinkage` columns, a `padj_na_reason` column, a `sessionInfo.txt` provenance file, and a `run_manifest.json` that lets the tool **warn on a wrong-dataset or wrong-contrast import**.
+- **Transparency & accuracy pass** — Hallmark enrichment is relabeled **over-representation (Enrichr), not GSEA**; pathway/Hallmark backgrounds are clarified as the external services' own genome-wide sets; the DEG table now explains why a gene's padj is `NA` (Cook's outlier vs independent filtering); Save Session states exactly what is and isn't stored; and every in-app method popup was reconciled with the code.
+- **Cite & License built in** — a new **Cite** button in the header opens a modal with the software citation, the underlying-method citations, and the MIT license. The tool is now released under **MIT**, with a `CITATION.cff` and third-party attributions.
+
 ## What's new in v37
 
 - **Authoritative DESeq2 in R** — a new round-trip bridge lets you swap the in-browser approximation for reference DESeq2 numbers. **Run real DESeq in R** exports a bundle (contrast count matrix, all-sample matrix, and a ready-to-run `deseq2_<contrast>.R` script); run `Rscript deseq2_<contrast>.R` locally, then drop the results table and blind-VST matrix onto **Import DESeq2 output**. Every view (Volcano, DEG Table, Scatter, PCA, Heatmap, Pathways, TF) switches to the real results, with each file auto-detected from its columns. The whole exchange stays on your own machine.
