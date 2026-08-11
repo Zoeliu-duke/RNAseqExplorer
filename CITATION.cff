@@ -1,0 +1,73 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "RNA-seq Explorer"
+abstract: >-
+  A single-file, browser-based tool for exploring bulk RNA-seq differential
+  expression. It provides an in-browser DESeq2-style analysis (DE, PCA, heatmap,
+  scatter, pathway over-representation, and mouse CollecTRI transcription-factor
+  activity) and an optional bridge to run genuine DESeq2 in R and import the
+  results back so every view uses authentic DESeq2 numbers.
+type: software
+authors:
+  - family-names: "Liu"
+    given-names: "Yaxin"
+    affiliation: "Edward Miao Lab, Duke University"
+    orcid: "https://orcid.org/0009-0004-0853-7790"
+version: "V38"
+date-released: "2026-08-11"
+license: MIT
+# repository-code: "https://github.com/<your-org>/<your-repo>"   # <-- set this
+keywords:
+  - RNA-seq
+  - differential expression
+  - DESeq2
+  - transcription factor activity
+  - CollecTRI
+  - over-representation analysis
+references:
+  - type: article
+    title: "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2"
+    authors:
+      - { family-names: "Love", given-names: "Michael I." }
+      - { family-names: "Huber", given-names: "Wolfgang" }
+      - { family-names: "Anders", given-names: "Simon" }
+    journal: "Genome Biology"
+    year: 2014
+    volume: 15
+    doi: "10.1186/s13059-014-0550-8"
+  - type: article
+    title: "Expanding the coverage of regulons from high-confidence prior knowledge for accurate estimation of transcription factor activities"
+    authors:
+      - { family-names: "Müller-Dott", given-names: "Sophia" }
+      - { family-names: "Tsirvouli", given-names: "Eirini" }
+      - { family-names: "Vazquez", given-names: "Miguel" }
+      - { family-names: "Ramirez Flores", given-names: "Ricardo O." }
+      - { family-names: "Badia-i-Mompel", given-names: "Pau" }
+      - { family-names: "Fallegger", given-names: "Robin" }
+      - { family-names: "Türei", given-names: "Dénes" }
+      - { family-names: "Lægreid", given-names: "Astrid" }
+      - { family-names: "Saez-Rodriguez", given-names: "Julio" }
+    journal: "Nucleic Acids Research"
+    year: 2023
+    volume: 51
+    issue: 20
+    doi: "10.1093/nar/gkad841"
+  - type: article
+    title: "decoupleR: ensemble of computational methods to infer biological activities from omics data"
+    authors:
+      - { family-names: "Badia-i-Mompel", given-names: "Pau" }
+      - { family-names: "Vélez Santiago", given-names: "Jesús" }
+      - { family-names: "Braunger", given-names: "Jana" }
+      - { family-names: "Geiss", given-names: "Celina" }
+      - { family-names: "Dimitrov", given-names: "Daniel" }
+      - { family-names: "Müller-Dott", given-names: "Sophia" }
+      - { family-names: "Taus", given-names: "Petr" }
+      - { family-names: "Dugourd", given-names: "Aurélien" }
+      - { family-names: "Holland", given-names: "Christian H." }
+      - { family-names: "Ramirez Flores", given-names: "Ricardo O." }
+      - { family-names: "Saez-Rodriguez", given-names: "Julio" }
+    journal: "Bioinformatics Advances"
+    year: 2022
+    volume: 2
+    issue: 1
+    doi: "10.1093/bioadv/vbac016"
