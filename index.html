@@ -1368,17 +1368,19 @@ tr:hover td{background:var(--bg-hover)}
       <div style="margin-bottom:14px">
         <div class="lbl" style="margin-bottom:6px">Upload additional count files</div>
         <div class="upload-zone" id="uploadZone">
-          <input type="file" id="fileInput" multiple accept=".txt,.tsv,.tab,.count,.csv,.json"
+          <input type="file" id="fileInput" multiple accept=".txt,.tsv,.tab,.count,.csv,.xlsx,.json"
             onchange="handleFiles(this.files)">
           <div class="uz-icon">⊕</div>
           <div class="uz-txt">Click or drag &amp; drop count files here<br>
             <span style="color:var(--muted2)">One sample per file: <code>gene_id&nbsp;&nbsp;count</code> (tab- or comma-separated). The gene id can be a mouse Ensembl ID (<code>ENSMUSG…</code>) <b>or</b> an MGI gene symbol (<code>Trp53</code>, <code>Actb</code>) — no Ensembl ID required.<br>
             Or a single wide-format matrix with one column per sample (featureCounts output is auto-detected)<br>
+            Or an Excel <code>.xlsx</code> workbook — every sheet is scanned and the count-matrix tab is auto-selected (e.g. GeoMx <code>TargetCountMatrix</code>)<br>
             Or drop a saved session <code>.json</code> to restore</span>
           </div>
         </div>
         <div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
         <div class="upload-status" id="uploadStatus"></div>
+        <div id="xlsxPickers"></div>
       </div>
 
       <!-- Sample list -->
@@ -2314,47 +2316,50 @@ function handleFiles(files){
 
   const tasks=arr.map(file=>new Promise(resolve=>{
     const reader=new FileReader();
-    reader.onload=e=>{
+    const finish=()=>{ done++; fill.style.width=(done/arr.length*100)+'%'; resolve(); };
+    const setAddStatus=(added,msgs)=>{
+      if(!added) return;
+      const head = arr.length>1 ? `${done+1}/${arr.length}: ${file.name} → ` : '';
+      status.textContent = head +
+        (added===1 ? msgs[0] : `${added} samples (${msgs.slice(0,3).join(', ')}${added>3?', …':''})`);
+    };
+
+    // Excel workbook — read every sheet, auto-pick the count-matrix tab.
+    if(/\.xlsx$/i.test(file.name)){
+      reader.onload = async e=>{
+        try{
+          const book = await readXlsx(e.target.result);
+          book.sheets.forEach(s=>{ s.score = xlsxSheetScore(xlsxParseRows(s.xml, book.sst, 60)); });  // preview-score
+          const best = book.sheets.reduce((a,b)=> (b.score>a.score?b:a), {score:0, name:null});
+          if(!best.name || best.score<=0){
+            status.textContent = `⚠ ${file.name}: no sheet looks like a gene × sample count matrix (sheets: ${book.sheets.map(s=>s.name).join(', ')})`;
+          } else {
+            _xlsxBooks[file.name] = book;
+            loadXlsxSheet(file.name, best.name);   // full-parses the chosen sheet + shows the picker
+          }
+        } catch(err){
+          status.textContent = `⚠ ${file.name}: could not read Excel file — ${err.message||err}`;
+        }
+        finish();
+      };
+      reader.onerror = finish;
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+
+    // Plain-text count file (txt / tsv / csv / …)
+    reader.onload = e=>{
       const parsed = parseCountFile(e.target.result);
       const fbase  = file.name.replace(/\.(txt|tsv|tab|count|csv)$/i,'');
-      let perSampleMsgs = [];
-      let addedSamples  = 0;
-
-      if(!parsed || !parsed.length){
+      const {added, msgs, empty} = _addParsedSamples(parsed, fbase, file.name);
+      if(empty){
         status.textContent = `⚠ ${file.name}: no gene rows found (need a gene id — ENSMUSG… or an MGI symbol — plus counts)`;
-      } else if(parsed.length===1 && parsed[0].name===null){
-        // Long format — one sample, named after the file
-        const counts = parsed[0].counts;
-        const nG = Object.keys(counts).length;
-        const grp = fbase.replace(/[_\-]\d+$/,'');
-        sampleStore.push({name:fbase, group:grp, isBuiltin:false, rawCounts:counts, _arr:null});
-        addedSamples = 1;
-        perSampleMsgs.push(`${fbase} · ${nG.toLocaleString()} genes`);
       } else {
-        // Wide format — one entry per sample column. Use the column header as
-        // the sample name and infer group by stripping a trailing _N / -N.
-        parsed.forEach(s=>{
-          const nG = Object.keys(s.counts).length;
-          if(!nG) return; // skip empty columns
-          const sname = s.name;
-          const grp   = sname.replace(/[_\-]\d+$/,'').replace(/\..*$/,'');
-          sampleStore.push({name:sname, group:grp, isBuiltin:false, rawCounts:s.counts, _arr:null});
-          addedSamples++;
-          perSampleMsgs.push(`${sname} · ${nG.toLocaleString()} genes`);
-        });
+        setAddStatus(added, msgs);
       }
-
-      done++;
-      fill.style.width=(done/arr.length*100)+'%';
-      if(addedSamples){
-        const head = arr.length>1 ? `${done}/${arr.length}: ${file.name} → ` : '';
-        status.textContent = head +
-          (addedSamples===1 ? perSampleMsgs[0]
-                            : `${addedSamples} samples (${perSampleMsgs.slice(0,3).join(', ')}${addedSamples>3?', …':''})`);
-      }
-      resolve();
+      finish();
     };
-    reader.onerror=()=>{done++;fill.style.width=(done/arr.length*100)+'%';resolve();};
+    reader.onerror = finish;
     reader.readAsText(file);
   }));
 
@@ -2492,9 +2497,22 @@ function parseCountFile(text){
   // its data-column cells (cols 1..n) parses as a non-negative integer-ish
   // number. If they ALL look numeric, there is no header and we synthesise
   // sample names. Otherwise row 0 is the header.
-  const looksNumeric = s => s!=='' && !isNaN(parseFloat(s));
+  // Strict: the WHOLE cell must be a number. (parseFloat would treat a sample name
+  // like "1-1-1 | 001 | Segment 1" as numeric because it starts with a digit.)
+  const looksNumeric = s => /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(s);
   const rest = firstCols.slice(1);
-  const hasHeader = rest.some(c => !looksNumeric(c));
+  // A header is present if any sample-name cell is non-numeric (the common case),
+  // OR the first cell is a recognised id-column label. The second test keeps the
+  // real sample names when they happen to be purely numeric (e.g. numeric sample
+  // IDs), which would otherwise be mistaken for a headerless data row.
+  const ID_HEADERS = new Set(['','gene','geneid','gene_id','genes','geneids',
+    'gene name','gene_name','genename','ensembl','ensembl_id','ensemblid',
+    'ensembl_gene_id','ensemblgeneid','symbol','mgi_symbol','mgisymbol',
+    'gene_symbol','genesymbol','gene symbol','id','name','target_id','targetid',
+    'targetname','probename','feature','featureid','feature_id','transcript','transcript_id',
+    'x','row','rowname','rownames','rowid']);
+  const firstLabel = (firstCols[0]||'').trim().toLowerCase();
+  const hasHeader = rest.some(c => !looksNumeric(c)) || ID_HEADERS.has(firstLabel);
 
   let header, dataStart;
   if(hasHeader){
@@ -2542,6 +2560,372 @@ function parseCountFile(text){
     }
   }
   return samples;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Excel (.xlsx) workbooks — read every sheet, auto-pick the count-matrix tab
+// ──────────────────────────────────────────────────────────────────────────────
+// Vendor exports (e.g. NanoString GeoMx DSP) put the counts in ONE sheet among
+// several (TargetCountMatrix, alongside SegmentProperties, TargetProperties, …).
+// We unzip the workbook with the browser's built-in DecompressionStream (no
+// library), read each sheet, and score them to find the gene × sample matrix.
+let _xlsxBooks = {};   // filename -> { sheets:[{name, rows, score}] }
+
+// Read an .xlsx ArrayBuffer WITHOUT parsing every cell up front: unzip with the
+// browser's built-in DecompressionStream, decode shared strings, and keep each
+// sheet's raw XML so rows are parsed on demand. A GeoMx TargetCountMatrix can be
+// 16k genes × dozens of segments (27 MB / 574k cells) — far too large to DOM-walk
+// every sheet, so we regex-parse a small preview to score, then fully parse only
+// the chosen sheet. Returns { sheets:[{name, xml}], sst:[…] } in tab order.
+async function readXlsx(buf){
+  const dv=new DataView(buf), u8=new Uint8Array(buf), td=new TextDecoder();
+  let eocd=-1; const lim=Math.max(0, u8.length-22-65536);
+  for(let i=u8.length-22; i>=lim; i--){ if(dv.getUint32(i,true)===0x06054b50){ eocd=i; break; } }
+  if(eocd<0) throw new Error('not a valid .xlsx (no ZIP directory)');
+  const cdOff=dv.getUint32(eocd+16,true), nEnt=dv.getUint16(eocd+10,true), ent={};
+  let p=cdOff;
+  for(let e=0; e<nEnt; e++){
+    if(dv.getUint32(p,true)!==0x02014b50) break;
+    const fnLen=dv.getUint16(p+28,true), exLen=dv.getUint16(p+30,true), cmLen=dv.getUint16(p+32,true);
+    ent[td.decode(u8.subarray(p+46, p+46+fnLen))] =
+      { method:dv.getUint16(p+10,true), compSize:dv.getUint32(p+20,true), lho:dv.getUint32(p+42,true) };
+    p += 46+fnLen+exLen+cmLen;
+  }
+  const readEntry = async name=>{
+    const en=ent[name]; if(!en) return null;
+    const lfn=dv.getUint16(en.lho+26,true), lex=dv.getUint16(en.lho+28,true);
+    const start=en.lho+30+lfn+lex, comp=u8.subarray(start, start+en.compSize);
+    if(en.method===0) return td.decode(comp);                                    // stored
+    const s=new Blob([comp]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return td.decode(await new Response(s).arrayBuffer());                        // raw deflate
+  };
+  const wbXml=await readEntry('xl/workbook.xml'), relsXml=await readEntry('xl/_rels/workbook.xml.rels');
+  if(!wbXml || !relsXml) throw new Error('missing workbook parts');
+  const relMap={};   // rId -> sheet path (targets may be absolute "/xl/…" or relative to xl/)
+  (relsXml.match(/<Relationship\b[^>]*>/g)||[]).forEach(t=>{
+    const id=(t.match(/Id="([^"]+)"/)||[])[1]; let tg=(t.match(/Target="([^"]+)"/)||[])[1];
+    if(id && tg){ tg = tg[0]==='/' ? tg.slice(1) : 'xl/'+tg.replace(/^\.\//,''); relMap[id]=tg; }
+  });
+  const sst=_xlsxSharedStrings(await readEntry('xl/sharedStrings.xml'));
+  const sheets=[];
+  for(const t of (wbXml.match(/<sheet\b[^>]*\/?>/g)||[])){
+    const nm=_xlsxDecode((t.match(/\bname="([^"]*)"/)||[])[1]||'');
+    const rid=(t.match(/\br:id="([^"]+)"/)||[])[1];
+    const tgt=relMap[rid];
+    sheets.push({ name:nm, xml: tgt ? (await readEntry(tgt))||'' : '' });
+  }
+  return { sheets, sst };
+}
+
+// Decode the shared-string table to an index-aligned array. Regex, not DOM, so a
+// 97k-entry table (typical for a GeoMx workbook) parses in a blink.
+function _xlsxSharedStrings(xml){
+  const out=[]; if(!xml) return out;
+  const re=/<si\b[^>]*?(?:\/>|>([\s\S]*?)<\/si>)/g; let m;
+  while((m=re.exec(xml))){
+    const inner=m[1];
+    if(inner==null){ out.push(''); continue; }
+    let s=''; const tre=/<t\b[^>]*?(?:\/>|>([\s\S]*?)<\/t>)/g; let tm;
+    while((tm=tre.exec(inner))) s+=(tm[1]||'');
+    out.push(_xlsxDecode(s));
+  }
+  return out;
+}
+
+// Decode the XML entities that appear in xlsx text.
+function _xlsxDecode(s){
+  if(s==null) return '';
+  if(s.indexOf('&')<0) return s;
+  return s.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'")
+          .replace(/&#x([0-9a-fA-F]+);/g,(_,h)=>String.fromCodePoint(parseInt(h,16)))
+          .replace(/&#(\d+);/g,(_,d)=>String.fromCodePoint(+d))
+          .replace(/&amp;/g,'&');
+}
+
+// Column letters (e.g. "AB") -> 0-based index.
+function _xlsxColToNum(ref){ const m=(ref||'').match(/^[A-Z]+/); if(!m) return 0; const s=m[0]; let n=0; for(let i=0;i<s.length;i++) n=n*26+(s.charCodeAt(i)-64); return n-1; }
+
+// Parse a worksheet's XML into rows (arrays of strings), up to `limit` rows.
+// Regex-based (no DOM) so a 27 MB / 574k-cell sheet parses in ~1 s.
+function xlsxParseRows(xml, sst, limit){
+  const rows=[]; if(!xml) return rows;
+  const s0=xml.indexOf('<sheetData'); if(s0<0) return rows;
+  const s1=xml.indexOf('</sheetData>');
+  const body=xml.slice(s0, s1<0?undefined:s1);
+  const rowRe=/<row\b[^>]*?(?:\/>|>([\s\S]*?)<\/row>)/g; let rm, maxc=0;
+  while((rm=rowRe.exec(body))){
+    if(rows.length>=limit) break;
+    const inner=rm[1], row=[];
+    if(inner!=null){
+      const cellRe=/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g; let cm;
+      while((cm=cellRe.exec(inner))){
+        const attrs=cm[1], cin=cm[2];
+        const rref=(attrs.match(/\br="([A-Z]+)\d+"/)||[])[1];
+        const idx=rref?_xlsxColToNum(rref):row.length;
+        const t=(attrs.match(/\bt="([^"]+)"/)||[])[1];
+        let v='';
+        if(cin!=null){
+          if(t==='inlineStr'){ const im=cin.match(/<t\b[^>]*?(?:\/>|>([\s\S]*?)<\/t>)/); v=im?_xlsxDecode(im[1]||''):''; }
+          else { const vm=cin.match(/<v\b[^>]*?>([\s\S]*?)<\/v>/); const raw=vm?vm[1]:''; v=(t==='s')?(sst[+raw]||''):_xlsxDecode(raw); }
+        }
+        row[idx]=v;
+      }
+    }
+    if(row.length>maxc) maxc=row.length;
+    rows.push(row);
+  }
+  for(const r of rows){ for(let k=0;k<maxc;k++) if(r[k]===undefined) r[k]=''; }
+  return rows;
+}
+
+// Score a sheet's 2-D rows as a gene × sample count matrix: first column looks
+// like gene IDs and several other columns are numeric. Higher = more count-like.
+function xlsxSheetScore(rows){
+  if(!rows || rows.length<3) return 0;
+  let ncol=0; rows.forEach(r=>{ if(r.length>ncol) ncol=r.length; });
+  if(ncol<2) return 0;
+  const data=rows.slice(1, Math.min(rows.length,61));      // assume row 0 is a header
+  if(!data.length) return 0;
+  let geneHits=0; const colNum=new Array(ncol).fill(0), colTot=new Array(ncol).fill(0);
+  data.forEach(r=>{
+    if(isGeneId((r[0]||'').trim())) geneHits++;
+    for(let j=1;j<ncol;j++){ const v=(r[j]||'').trim(); if(v!==''){ colTot[j]++; if(/^-?\d+(\.\d+)?$/.test(v)) colNum[j]++; } }
+  });
+  const geneFrac=geneHits/data.length; let numCols=0;
+  for(let j=1;j<ncol;j++) if(colTot[j]>0 && colNum[j]/colTot[j]>=0.9) numCols++;
+  if(geneFrac<0.5 || numCols<1) return 0;
+  return geneFrac * numCols * Math.log2(data.length+1);
+}
+
+// Serialize a sheet's rows to TSV so the existing parseCountFile() consumes it.
+function xlsxRowsToText(rows){
+  return rows.map(r=>r.map(c=>(c==null?'':String(c)).replace(/[\t\r\n]/g,' ')).join('\t')).join('\n');
+}
+
+// Turn parsed count columns into sampleStore entries. Shared by the text-file and
+// xlsx paths. srcFile tags a sample with its origin so an xlsx sheet-switch can
+// cleanly replace just that workbook's samples.
+function _addParsedSamples(parsed, fbase, srcFile){
+  let added=0; const msgs=[];
+  if(!parsed || !parsed.length) return {added, msgs, empty:true};
+  if(parsed.length===1 && parsed[0].name===null){
+    const counts=parsed[0].counts, nG=Object.keys(counts).length;
+    if(nG){ const grp=fbase.replace(/[_\-]\d+$/,'');
+      sampleStore.push({name:fbase, group:grp, isBuiltin:false, rawCounts:counts, _arr:null, _srcFile:srcFile});
+      added=1; msgs.push(`${fbase} · ${nG.toLocaleString()} genes`); }
+  } else {
+    parsed.forEach(s=>{ const nG=Object.keys(s.counts).length; if(!nG) return;
+      const grp=s.name.replace(/[_\-]\d+$/,'').replace(/\..*$/,'');
+      sampleStore.push({name:s.name, group:grp, isBuiltin:false, rawCounts:s.counts, _arr:null, _srcFile:srcFile});
+      added++; msgs.push(`${s.name} · ${nG.toLocaleString()} genes`); });
+  }
+  return {added, msgs, empty:false};
+}
+
+// Load one sheet of an already-parsed workbook as samples (replacing any samples
+// previously loaded from that workbook), then refresh the override picker.
+function loadXlsxSheet(fname, sheetName){
+  const rec=_xlsxBooks[fname]; if(!rec) return;
+  const sh=rec.sheets.find(s=>s.name===sheetName); if(!sh) return;
+  for(let i=sampleStore.length-1;i>=0;i--)                                        // drop this workbook's prior samples
+    if(sampleStore[i]._srcFile===fname && !sampleStore[i].isBuiltin) sampleStore.splice(i,1);
+  const rows=xlsxParseRows(sh.xml, rec.sst, Infinity);                            // full parse of just this sheet
+  const headerNames = rows[0] ? rows[0].slice(1).map(s=>(s||'').trim()) : [];
+  // GeoMx-style: find a metadata sheet (e.g. SegmentProperties) describing these columns
+  const meta=_xlsxMetaSheet(rec, headerNames);
+  rec.meta=meta; rec.chosen=sheetName; rec.reconstructed=false;
+  rec.qcSystematic = meta ? _xlsxQCSystematic(rec) : new Set();                   // run-wide flags to ignore
+  // If the matrix is normalized but a NormalizationFactor is present, recover raw counts
+  if(meta && meta.nfCol>=0 && _xlsxNonIntFrac(rows)>0.2)
+    rec.reconstructed = _xlsxReconstructRaw(rows, headerNames, meta);
+  rec.nonInt = _xlsxNonIntFrac(rows);                                             // (0 after a successful recovery)
+  rec.parsed = parseCountFile(xlsxRowsToText(rows));                              // cache: sheet switches/QC toggles reuse this
+  // Default grouping: prefer a metadata column literally named like a grouping field
+  if(meta && rec.groupBy===undefined){
+    const pref=meta.groupCols.find(g=>/^(type|group|class|condition|treatment|genotype|segmenttype)$/i.test(g.name.replace(/\s+/g,'')));
+    rec.groupBy = pref ? pref.name : null;
+  }
+  _syncXlsxSamples(fname);
+  renderXlsxPickers();
+}
+
+// Fraction of numeric data cells that are non-integer — near 1 for normalized data
+// (e.g. GeoMx Q3), ~0 for raw counts.
+function _xlsxNonIntFrac(rows){
+  let nonint=0, tot=0;
+  for(let i=1; i<Math.min(rows.length,300); i++){
+    const r=rows[i]||[];
+    for(let j=1;j<r.length;j++){ const v=(r[j]||'').trim();
+      if(/^-?\d+$/.test(v)) tot++; else if(/^-?\d+\.\d+$/.test(v)){ tot++; nonint++; } }
+  }
+  return tot? nonint/tot : 0;
+}
+
+// Find a metadata sheet whose rows describe the count-matrix columns, by locating
+// the column whose values match the count headers (e.g. GeoMx SegmentProperties'
+// SegmentDisplayName). Returns {sheetName, header, byKey, nfCol, groupCols} or null.
+function _xlsxMetaSheet(rec, headerNames){
+  const hset=new Set(headerNames.filter(Boolean));
+  if(hset.size<2) return null;
+  let best=null;
+  for(const sh of rec.sheets){
+    if(sh.name===rec.chosen) continue;
+    const rows=xlsxParseRows(sh.xml, rec.sst, 2000);
+    if(rows.length<2) continue;
+    const header=(rows[0]||[]).map(h=>(h||'').trim());
+    let keyCol=-1, keyHits=0;
+    for(let c=0;c<header.length;c++){
+      let hits=0; for(let r=1;r<rows.length;r++){ if(hset.has((rows[r][c]||'').trim())) hits++; }
+      if(hits>keyHits){ keyHits=hits; keyCol=c; }
+    }
+    if(keyCol>=0 && keyHits>=Math.max(2, hset.size*0.5) && (!best || keyHits>best.keyHits))
+      best={ sheetName:sh.name, rows, header, keyCol, keyHits };
+  }
+  if(!best) return null;
+  const byKey=new Map();
+  for(let r=1;r<best.rows.length;r++){ const k=(best.rows[r][best.keyCol]||'').trim(); if(k && !byKey.has(k)) byKey.set(k, best.rows[r]); }
+  const nfCol=best.header.findIndex(h=>/^(normalizationfactor|normfactor|q3.*factor|norm.*factor)$/i.test((h||'').replace(/\s+/g,'')));
+  const qcCol=best.header.findIndex(h=>/^(qcflags?|qc.?status|qcresult|segmentqc|qc)$/i.test((h||'').replace(/\s+/g,'')));
+  const groupCols=[];   // categorical columns usable as groups
+  for(let c=0;c<best.header.length;c++){
+    if(c===best.keyCol) continue;
+    const vals=new Set(); let nonEmpty=0, numeric=0;
+    for(let r=1;r<best.rows.length;r++){ const v=(best.rows[r][c]||'').trim(); if(v){ nonEmpty++; vals.add(v); if(/^-?\d+(\.\d+)?$/.test(v)) numeric++; } }
+    if(nonEmpty>=2 && vals.size>=2 && vals.size<=Math.max(2,Math.floor((best.rows.length-1)/2)) && numeric<nonEmpty*0.5)
+      groupCols.push({ name:best.header[c]||('col'+(c+1)), col:c, n:vals.size });
+  }
+  return { sheetName:best.sheetName, header:best.header, byKey, nfCol, qcCol, groupCols };
+}
+
+// Recover raw integer counts in place: divide each count column by its segment's
+// NormalizationFactor (Q3 etc. is a per-segment scalar). Only applied if it yields
+// clean integers for ≥80% of matched segments; returns whether it was applied.
+function _xlsxReconstructRaw(rows, headerNames, meta){
+  const nf=headerNames.map(h=>{ const mr=meta.byKey.get(h); const f=mr?parseFloat(mr[meta.nfCol]):NaN; return (isFinite(f)&&f>0)?f:null; });
+  if(nf.filter(Boolean).length < headerNames.length*0.8) return false;
+  let bad=0, tot=0;
+  for(let r=1;r<Math.min(rows.length,300);r++){ for(let j=0;j<nf.length;j++){ const f=nf[j]; if(!f) continue;
+    const v=rows[r][j+1]; if(v==null||v==='') continue; const raw=parseFloat(v)/f; if(!isFinite(raw)) continue;
+    tot++; if(Math.abs(raw-Math.round(raw))>1e-4) bad++; } }
+  if(!tot || bad/tot>0.02) return false;
+  for(let r=1;r<rows.length;r++){ for(let j=0;j<nf.length;j++){ const f=nf[j]; if(!f) continue;
+    const v=rows[r][j+1]; if(v==null||v==='') continue; rows[r][j+1]=String(Math.round(parseFloat(v)/f)); } }
+  return true;
+}
+
+// Flags shared by (nearly) all segments are systematic / run-wide — e.g. a whole-run
+// "Low Negative Probe Count", or "Low Nuclei Count" when nuclei were never counted so
+// every segment carries it. Those are NOT per-segment defects, so they're ignored.
+// (This is why removing "low" segments never cascades: only flags that actually
+// discriminate between segments count, and they come from the file, never recomputed.)
+function _xlsxQCSystematic(rec){
+  const m=rec.meta; if(!m || m.qcCol<0) return new Set();
+  const freq=new Map(); let n=0;
+  m.byKey.forEach(row=>{ n++;
+    new Set(String(row[m.qcCol]||'').split(/[,;]+/).map(f=>f.trim()).filter(Boolean)).forEach(f=>freq.set(f,(freq.get(f)||0)+1)); });
+  const sys=new Set(), thr=Math.max(1, Math.floor(n*0.9));
+  freq.forEach((c,f)=>{ if(c>=thr) sys.add(f); });
+  return sys;
+}
+// A segment "failed QC" if it carries a DISCRIMINATING flag — one not shared by nearly
+// all segments (and not a Negative-Probe technical warning). Empty QCFlags = passed.
+function _xlsxQCFailed(q, systematic){
+  if(!q) return false;
+  return String(q).split(/[,;]+/).map(f=>f.trim()).filter(Boolean)
+    .filter(f=>!(systematic&&systematic.has(f)) && !/negative\s*probe/i.test(f)).length > 0;
+}
+// Count this workbook's QC-failed segments (for the checkbox label).
+function _xlsxQCFailCount(rec){
+  if(!rec.meta || rec.meta.qcCol<0 || !rec.parsed) return 0;
+  const p=rec.parsed; if(p.length===1 && p[0].name===null) return 0;
+  let n=0; p.forEach(s=>{ const mr=rec.meta.byKey.get(s.name); if(mr && _xlsxQCFailed(mr[rec.meta.qcCol], rec.qcSystematic)) n++; });
+  return n;
+}
+// Guardrail: warn if enabling QC-hide would drop a group below 2 samples — i.e. the
+// QC flag is confounded with the grouping (classic trap: small ROIs all in one arm).
+function _xlsxQCGroupWarning(rec){
+  if(!rec.hideQC || !rec.meta || !rec.groupBy || rec.meta.qcCol<0 || !rec.parsed) return '';
+  const gcol=rec.meta.groupCols.find(g=>g.name===rec.groupBy); if(!gcol) return '';
+  const full={}, kept={};
+  rec.parsed.forEach(s=>{ const mr=rec.meta.byKey.get(s.name); if(!mr) return;
+    const g=(mr[gcol.col]||'').trim()||'ungrouped'; full[g]=(full[g]||0)+1;
+    if(!_xlsxQCFailed(mr[rec.meta.qcCol], rec.qcSystematic)) kept[g]=(kept[g]||0)+1; });
+  const lost=Object.keys(full).filter(g=>g!=='ungrouped' && full[g]>=2 && (kept[g]||0)<2);
+  if(!lost.length) return '';
+  return `⚠ QC-hide drops <b>${lost.map(escH).join(', ')}</b> below 2 samples — that comparison can't run. The QC flag looks <b>confounded with your grouping</b> (e.g. small ROIs concentrated in one group), so filtering here would bias the result.`;
+}
+
+// (Re)build this workbook's samples in sampleStore from the cached rec.parsed —
+// applying the chosen group column and the optional "hide QC-failed" filter, with
+// no re-parse. Group + QC toggles are therefore instant.
+function _syncXlsxSamples(fname){
+  const rec=_xlsxBooks[fname]; if(!rec || !rec.parsed) return;
+  for(let i=sampleStore.length-1;i>=0;i--)
+    if(sampleStore[i]._srcFile===fname && !sampleStore[i].isBuiltin) sampleStore.splice(i,1);
+  const p=rec.parsed;
+  const list=(p.length===1 && p[0].name===null)
+    ? [{name: fname.replace(/\.[^.]+$/,''), counts:p[0].counts}] : p;
+  const meta=rec.meta;
+  const gcol=(meta && rec.groupBy) ? meta.groupCols.find(g=>g.name===rec.groupBy) : null;
+  const qcOn=!!(meta && rec.hideQC && meta.qcCol>=0);
+  list.forEach(s=>{
+    if(!Object.keys(s.counts).length) return;
+    const mr=meta ? meta.byKey.get(s.name) : null;
+    if(qcOn && mr && _xlsxQCFailed(mr[meta.qcCol], rec.qcSystematic)) return;     // hide QC-failed
+    const grp = gcol ? ((mr && (mr[gcol.col]||'').trim()) || 'ungrouped')
+                     : (s.name.replace(/[_\-]\d+$/,'').replace(/\..*$/,'') || s.name);
+    sampleStore.push({name:s.name, group:grp, isBuiltin:false, rawCounts:s.counts, _arr:null, _srcFile:fname});
+  });
+}
+function applyXlsxGroup(fname, colName){   // "Group by" dropdown handler
+  const rec=_xlsxBooks[fname]; if(!rec) return;
+  rec.groupBy = colName || null;
+  _syncXlsxSamples(fname); renderXlsxPickers(); renderSampleMgr();
+}
+function toggleXlsxQC(fname, on){           // "Hide QC-failed segments" checkbox handler
+  const rec=_xlsxBooks[fname]; if(!rec) return;
+  rec.hideQC = !!on;
+  _syncXlsxSamples(fname); renderXlsxPickers(); renderSampleMgr();
+}
+
+// Persistent picker(s) below the upload zone: sheet chooser, raw-recovery note, and
+// (for GeoMx-style workbooks) a metadata-driven "Group by" chooser.
+function renderXlsxPickers(){
+  const box=document.getElementById('xlsxPickers'); if(!box) return;
+  const selStyle=`font:inherit;padding:1px 4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-panel);color:var(--text)`;
+  box.innerHTML = Object.keys(_xlsxBooks).map(fname=>{
+    const rec=_xlsxBooks[fname];
+    const n=sampleStore.filter(s=>s._srcFile===fname && !s.isBuiltin).length;
+    const opts=rec.sheets.map(s=>{ const noc=(s.score||0)<=0;
+      return `<option value="${escH(s.name)}"${s.name===rec.chosen?' selected':''}>${escH(s.name)}${noc?' — no counts':''}</option>`; }).join('');
+    let note='';
+    if(rec.reconstructed)
+      note=`<div style="color:#2a9d5a;font-size:10.5px;line-height:1.45;margin:3px 0 0 20px;max-width:360px">✓ Recovered <b>raw counts</b> from normalized values (÷ NormalizationFactor in ${escH(rec.meta.sheetName)}).</div>`;
+    else if(rec.nonInt>0.2)
+      note=`<div style="color:var(--warn-clr);font-size:10.5px;line-height:1.45;margin:3px 0 0 20px;max-width:360px">⚠ Values look normalized / non-integer (e.g. GeoMx Q3) and no NormalizationFactor was found to recover raw counts. DESeq2-style analysis needs <b>raw integer counts</b>.</div>`;
+    let groupUI='';
+    if(rec.meta && rec.meta.groupCols.length){
+      const gopts=`<option value="">(by sample name)</option>`+
+        rec.meta.groupCols.map(g=>`<option value="${escH(g.name)}"${rec.groupBy===g.name?' selected':''}>${escH(g.name)} (${g.n} groups)</option>`).join('');
+      groupUI=`<div style="font-size:11px;color:var(--muted);margin:4px 0 0 20px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">`+
+        `<span>Group by</span>`+
+        `<select data-xf="${escH(fname)}" onchange="applyXlsxGroup(this.dataset.xf, this.value)" style="${selStyle}">${gopts}</select>`+
+        `<span style="color:var(--muted2)">from ${escH(rec.meta.sheetName)}</span></div>`;
+    }
+    let qcUI='';
+    if(rec.meta && rec.meta.qcCol>=0){
+      const nFail=_xlsxQCFailCount(rec);
+      const qcWarn=_xlsxQCGroupWarning(rec);
+      qcUI=`<label style="font-size:11px;color:var(--muted);margin:4px 0 0 20px;display:flex;align-items:center;gap:6px;cursor:pointer">`+
+        `<input type="checkbox" data-xf="${escH(fname)}" ${rec.hideQC?'checked':''} onchange="toggleXlsxQC(this.dataset.xf, this.checked)" style="width:auto;cursor:pointer;accent-color:var(--accent)">`+
+        `<span>Hide segments that failed QC <span style="color:var(--muted2)">(${nFail} flagged · ${escH(rec.meta.header[rec.meta.qcCol]||'QC')})</span></span></label>`+
+        (qcWarn?`<div style="color:var(--warn-clr);font-size:10.5px;line-height:1.45;margin:2px 0 0 34px;max-width:360px">${qcWarn}</div>`:'');
+    }
+    return `<div style="font-size:11px;color:var(--muted);margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">`+
+      `<span>📄 <b style="color:var(--text)">${escH(fname)}</b> → sheet</span>`+
+      `<select data-xf="${escH(fname)}" onchange="loadXlsxSheet(this.dataset.xf, this.value); renderSampleMgr();" style="${selStyle}">${opts}</select>`+
+      `<span>· ${n} sample${n!==1?'s':''}</span></div>` + note + groupUI + qcUI;
+  }).join('');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,11 @@
+n_common_genes	17364
+pearson_lfc	0.9926
+spearman_lfc	0.9987
+sign_concordance	1.0000
+deseq2_DEGs	6873
+tool_DEGs	6222
+overlap_DEGs	6117
+jaccard	0.8766
+sensitivity	0.8900
+precision	0.9831
+specificity	0.9900
